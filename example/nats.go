@@ -6,6 +6,7 @@ import (
 	"log/slog"
 	"time"
 
+	queueringcluster "github.com/dsyabitov/go-queuering-cluster"
 	server "github.com/nats-io/nats-server/v2/server"
 	"github.com/nats-io/nats.go"
 	"github.com/nats-io/nats.go/jetstream"
@@ -14,6 +15,18 @@ import (
 const (
 	natsWaitTime = 2 * time.Second
 )
+
+type ExampleNatsProcessorFactory struct{}
+
+func (r *ExampleNatsProcessorFactory) NewProcessor() queueringcluster.ClientNatsProcessor {
+	return &ExampleNatsProcessor{}
+}
+
+type ExampleNatsProcessor struct{}
+
+func (e *ExampleNatsProcessor) Process(ctx context.Context, qNum int, msg jetstream.Msg) error {
+	return nil
+}
 
 func startNats(ctx context.Context, conf *NatsConf) {
 	opts := &server.Options{

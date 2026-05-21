@@ -1,4 +1,4 @@
-package hashringcluster
+package queueringcluster
 
 import (
 	"context"
@@ -12,44 +12,47 @@ import (
 )
 
 type ClientRedisProcessor interface {
-	Process(ctx context.Context, rdb *redis.Client, qNum int, msg *redis.XMessage)
+	Process(ctx context.Context, qNum int, msg *redis.XMessage) error
 }
 
 type ClientRedisProcessorFactory interface {
-	NewClientRedisProcessor() ClientRedisProcessor
+	NewProcessor() ClientRedisProcessor
 }
 
 type RedisWorkerFactory struct {
-	RedisAddr string
-	QueueName string
-	NodeID    int
+	RedisAddr        string
+	QueueName        string
+	NodeID           int
+	NumRetries       int
+	ProcessorFactory ClientRedisProcessorFactory
 }
 
 func (r *RedisWorkerFactory) NewWorker(qNum int) Worker {
 	w := RedisWorker{
 		name:       fmt.Sprintf("node-%d-worker-%d", r.NodeID, qNum),
 		redisAddr:  r.RedisAddr,
-		numRetries: numRetries,
+		numRetries: r.NumRetries,
 		stream:     fmt.Sprintf("%s.%d", r.QueueName, qNum),
 		qNum:       qNum,
+		proc:       r.ProcessorFactory.NewProcessor(),
 	}
 	return &w
 }
 
 type RedisWorker struct {
-	redisAddr   string
-	name        string
-	stream      string
-	qNum        int
-	numRetries  int
-	procFactory ClientRedisProcessorFactory
+	proc       ClientRedisProcessor
+	redisAddr  string
+	name       string
+	stream     string
+	qNum       int
+	numRetries int
 }
 
 func (w *RedisWorker) Start(ctx context.Context, wg *sync.WaitGroup) error {
 	rdb := redis.NewClient(&redis.Options{
 		Addr:               w.redisAddr,
-		DialerRetries:      5,                      //nolint:mnd //temp
-		DialerRetryTimeout: 100 * time.Millisecond, //nolint:mnd //temp // used when DialerRetryBackoff is nil
+		DialerRetries:      5,                      //nolint:mnd //TODO
+		DialerRetryTimeout: 100 * time.Millisecond, //nolint:mnd //TODO // used when DialerRetryBackoff is nil
 		// Optional: exponential backoff with jitter and a cap.
 		//		DialerRetryBackoff: redis.DialRetryBackoffExponential(100*time.Millisecond, 2*time.Second),
 	})
@@ -70,15 +73,16 @@ func (w *RedisWorker) readMessages(ctx context.Context, rdb *redis.Client, wg *s
 		wg.Done()
 	}()
 
-	clientProc := w.procFactory.NewClientRedisProcessor()
+	group := fmt.Sprintf("%s.group", w.stream)
+	consumer := fmt.Sprintf("%s.consumer", w.stream)
 
 	for {
 		streams, err := rdb.XReadGroup(ctx, &redis.XReadGroupArgs{
-			Group:    fmt.Sprintf("%s.group", w.stream),
-			Consumer: fmt.Sprintf("%s.consumer", w.stream),
+			Group:    group,
+			Consumer: consumer,
 			Streams:  []string{w.stream, ">"},
 			Count:    0,
-			Block:    5 * time.Second, //nolint:mnd //tmp
+			Block:    5 * time.Second, //nolint:mnd // TODO
 			NoAck:    false,
 			Claim:    0,
 		}).Result()
@@ -94,8 +98,8 @@ func (w *RedisWorker) readMessages(ctx context.Context, rdb *redis.Client, wg *s
 		}
 		for _, stream := range streams {
 			for _, msg := range stream.Messages {
-				clientProc.Process(ctx, rdb, w.qNum, &msg)
-				rdb.XAck(ctx, "test", "test.group", msg.ID)
+				_ = w.proc.Process(ctx, w.qNum, &msg) // TODO - error handling and retries
+				rdb.XAck(ctx, w.stream, group, msg.ID)
 			}
 		}
 	}

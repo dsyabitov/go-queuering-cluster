@@ -1,4 +1,4 @@
-package hashringcluster
+package queueringcluster
 
 import (
 	"context"
@@ -12,22 +12,22 @@ import (
 )
 
 type ServerNode struct {
-	node       *cluster.Node
-	subscriber *Subscriber
-	hashring   *queuering.HashRing
-	syncEvt    chan memberlist.NodeEvent
-	name       string
-	queues     []int
-	port       int
+	Node       *cluster.Node
+	Subscriber *Subscriber
+	Hashring   *queuering.HashRing
+	SyncEvt    chan memberlist.NodeEvent
+	Name       string
+	Queues     []int
+	Port       int
 }
 
 func (n *ServerNode) Start(ctx context.Context) {
 	var err error
-	n.node, err = cluster.NewNode(1, n.port, n.name)
+	n.Node, err = cluster.NewNode(1, n.Port, n.Name)
 	if err != nil {
 		panic(err)
 	}
-	n.hashring.AddNode(n.name)
+	n.Hashring.AddNode(n.Name)
 
 	go n.processEventSync(ctx)
 loop:
@@ -35,10 +35,10 @@ loop:
 		select {
 		case <-ctx.Done():
 			break loop
-		case evt := <-n.node.EventsOut:
+		case evt := <-n.Node.EventsOut:
 			go n.processEvent(evt)
 
-		case msg := <-n.node.MessagesOut:
+		case msg := <-n.Node.MessagesOut:
 			go n.processMessage(msg)
 		}
 	}
@@ -50,7 +50,7 @@ func (n *ServerNode) processMessage(msg cluster.Message) {
 
 // EventsOut is buffered channel, so we make it locked via custom unbuffered channel.
 func (n *ServerNode) processEvent(evt memberlist.NodeEvent) {
-	n.syncEvt <- evt
+	n.SyncEvt <- evt
 }
 
 func (n *ServerNode) processEventSync(ctx context.Context) {
@@ -59,17 +59,17 @@ loop:
 		select {
 		case <-ctx.Done():
 			break loop
-		case evt := <-n.syncEvt:
+		case evt := <-n.SyncEvt:
 			if evt.Event == memberlist.NodeUpdate {
-				slog.Debug("cluster  event", "me", n.name, "evt", "update", "node", evt.Node.Name, "addr", evt.Node.Addr, "meta", string(evt.Node.Meta))
+				slog.Debug("cluster  event", "me", n.Name, "evt", "update", "node", evt.Node.Name, "addr", evt.Node.Addr, "meta", string(evt.Node.Meta))
 				n.processNodeUpdate()
 			}
 			if evt.Event == memberlist.NodeJoin {
-				slog.Debug("cluster  event", "me", n.name, "evt", "join", "node", evt.Node.Name, "addr", evt.Node.Addr)
+				slog.Debug("cluster  event", "me", n.Name, "evt", "join", "node", evt.Node.Name, "addr", evt.Node.Addr)
 				n.processNodeJoin(evt.Node.Name)
 			}
 			if evt.Event == memberlist.NodeLeave {
-				slog.Debug("cluster  event", "me", n.name, "evt", "leave", "node", evt.Node.Name, "addr", evt.Node.Addr)
+				slog.Debug("cluster  event", "me", n.Name, "evt", "leave", "node", evt.Node.Name, "addr", evt.Node.Addr)
 				n.processNodeLeave(evt.Node.Name)
 			}
 		}
@@ -77,33 +77,33 @@ loop:
 }
 
 func (n *ServerNode) processNodeLeave(name string) {
-	n.hashring.RemoveNode(name)
+	n.Hashring.RemoveNode(name)
 	n.unsubscribe()
 }
 
 func (n *ServerNode) processNodeJoin(name string) {
 	slog.Info("add node to queue", "node", name)
-	dist := n.hashring.AddNode(name)
+	dist := n.Hashring.AddNode(name)
 	for k, v := range dist {
-		slog.Info("distribution", "owner", n.name, "key", k, "nodes", v)
+		slog.Info("distribution", "owner", n.Name, "key", k, "nodes", v)
 	}
 	n.unsubscribe()
 }
 
 func (n *ServerNode) processNodeUpdate() {
-	tags := n.node.Tags()
+	tags := n.Node.Tags()
 	state := tags["subscription"]
 	if state == "unsubscribed" {
-		slog.Debug("trying to subscribe", "me", n.name)
+		slog.Debug("trying to subscribe", "me", n.Name)
 		n.trySubscribe()
 	} else {
-		slog.Debug("current state", "me", n.name, "state", state)
+		slog.Debug("current state", "me", n.Name, "state", state)
 	}
 	// TODO check all nodes subscribed
 }
 
 func (n *ServerNode) trySubscribe() {
-	for _, m := range n.node.Members() {
+	for _, m := range n.Node.Members() {
 		tags, err := cluster.NodeTags{}.FromString(string(m.Meta))
 		if err != nil {
 			panic(err)
@@ -116,13 +116,13 @@ func (n *ServerNode) trySubscribe() {
 			return
 		}
 	}
-	if len(n.node.Members()) > 1 {
+	if len(n.Node.Members()) > 1 {
 		n.subscribe()
 	}
 }
 
 func (n *ServerNode) subscribe() {
-	slog.Info("subscribe", "me", n.name)
+	slog.Info("subscribe", "me", n.Name)
 	// myQueues := make(map[int]any)
 	// var newQueues []int
 	// var k string
@@ -152,19 +152,19 @@ func (n *ServerNode) subscribe() {
 	// 	panic(err)
 	// }
 	// n.queues = newQueues
-	for _, num := range n.queues {
-		n.subscriber.Subscribe(num)
+	for _, num := range n.Queues {
+		n.Subscriber.Subscribe(num)
 	}
 }
 
 func (n *ServerNode) unsubscribe() {
-	slog.Info("unsubscribe", "me", n.name)
+	slog.Info("unsubscribe", "me", n.Name)
 	myQueues := make(map[int]any)
 	var newQueues []int
 	var k string
 
-	for k, newQueues = range n.hashring.GetDistribution() {
-		if k == n.name {
+	for k, newQueues = range n.Hashring.GetDistribution() {
+		if k == n.Name {
 			for i := range newQueues {
 				myQueues[i] = struct{}{}
 			}
@@ -172,20 +172,20 @@ func (n *ServerNode) unsubscribe() {
 		}
 	}
 
-	for i := range n.queues {
+	for i := range n.Queues {
 		if _, ok := myQueues[i]; !ok {
-			n.subscriber.Unsubscribe(i)
+			n.Subscriber.Unsubscribe(i)
 		}
 	}
-	err := n.node.UpdateTag("subscription", "unsubscribed", 3*time.Second) //nolint:mnd //TODO
+	err := n.Node.UpdateTag("subscription", "unsubscribed", 3*time.Second) //nolint:mnd //TODO
 	if err != nil {
 		panic(err)
 	}
-	n.queues = newQueues
+	n.Queues = newQueues
 }
 
 func (n *ServerNode) Join(anyNodeAddr string) {
-	_, err := n.node.Join([]string{anyNodeAddr})
+	_, err := n.Node.Join([]string{anyNodeAddr})
 	if err != nil {
 		panic(err)
 	}

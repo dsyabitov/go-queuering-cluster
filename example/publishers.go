@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 
+	"github.com/nats-io/nats.go"
 	"github.com/nats-io/nats.go/jetstream"
 	"github.com/redis/go-redis/v9"
 )
@@ -15,6 +16,25 @@ type Publisher interface {
 type NatsPublisher struct {
 	js        jetstream.JetStream
 	queueName string
+}
+
+func getStream(ctx context.Context, url string) (jetstream.JetStream, jetstream.Stream, error) {
+	// !TODO disconnect if error
+	nc, err := nats.Connect(url)
+	if err != nil {
+		return nil, nil, err
+	}
+
+	js, err := jetstream.New(nc)
+	if err != nil {
+		return nil, nil, err
+	}
+
+	stream, err := js.Stream(ctx, "SUBJECTS")
+	if err != nil {
+		return nil, nil, err
+	}
+	return js, stream, nil
 }
 
 func NewNatsPublisher(ctx context.Context, natsAddr string, queueName string) (*NatsPublisher, error) {

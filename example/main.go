@@ -12,6 +12,7 @@ import (
 
 	"github.com/alecthomas/kong"
 	"github.com/dsyabitov/go-queuering"
+	queueringcluster "github.com/dsyabitov/go-queuering-cluster"
 	"github.com/hashicorp/memberlist"
 	"github.com/redis/go-redis/v9"
 )
@@ -141,31 +142,35 @@ func startSubscriber(ctx context.Context, conf *SubscriberConf) {
 		panic(err)
 	}
 
-	var wf WorkerFactory
+	var wf queueringcluster.WorkerFactory
 	if conf.Nats > 0 {
 		stream := createNatsStream(fmt.Sprintf("localhost:%d", conf.Nats))
-		wf = &NatsWorkerFactory{
-			stream:    stream,
-			NodeID:    int(conf.Port),
-			QueueName: queueName,
+		wf = &queueringcluster.NatsWorkerFactory{
+			Stream:           stream,
+			NodeID:           int(conf.Port),
+			QueueName:        queueName,
+			NumRetries:       numRetries,
+			ProcessorFactory: &ExampleNatsProcessorFactory{},
 		}
 	} else {
-		wf = &RedisWorkerFactory{
-			RedisAddr: fmt.Sprintf("%s:%d", conf.RedisHost, conf.RedisPort),
-			QueueName: queueName,
-			NodeID:    int(conf.Port),
+		wf = &queueringcluster.RedisWorkerFactory{
+			RedisAddr:        fmt.Sprintf("%s:%d", conf.RedisHost, conf.RedisPort),
+			QueueName:        queueName,
+			NodeID:           int(conf.Port),
+			NumRetries:       numRetries,
+			ProcessorFactory: &ExampleRedisProcessorFactory{},
 		}
 	}
 
-	n := ServerNode{
-		name: fmt.Sprintf("node-%d", conf.Port),
-		subscriber: &Subscriber{
-			workers:      make(map[int]workerRec),
-			wokerFactory: wf,
+	n := queueringcluster.ServerNode{
+		Name: fmt.Sprintf("node-%d", conf.Port),
+		Subscriber: &queueringcluster.Subscriber{
+			Workers:      make(map[int]queueringcluster.WorkerRec),
+			WokerFactory: wf,
 		},
-		hashring: ring,
-		port:     int(conf.Port),
-		syncEvt:  make(chan memberlist.NodeEvent),
+		Hashring: ring,
+		Port:     int(conf.Port),
+		SyncEvt:  make(chan memberlist.NodeEvent),
 	}
 
 	go n.Start(ctx)

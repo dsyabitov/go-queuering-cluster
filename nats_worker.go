@@ -1,4 +1,4 @@
-package hashringcluster
+package queueringcluster
 
 import (
 	"context"
@@ -6,22 +6,33 @@ import (
 	"log/slog"
 	"sync"
 
-	"github.com/nats-io/nats.go"
 	"github.com/nats-io/nats.go/jetstream"
 )
 
+type ClientNatsProcessor interface {
+	Process(ctx context.Context, qNum int, msg jetstream.Msg) error
+}
+
+type ClientNatsProcessorFactory interface {
+	NewProcessor() ClientNatsProcessor
+}
+
 type NatsWorkerFactory struct {
-	stream    jetstream.Stream
-	QueueName string
-	NodeID    int
+	Stream           jetstream.Stream
+	QueueName        string
+	NodeID           int
+	NumRetries       int
+	ProcessorFactory ClientNatsProcessorFactory
 }
 
 func (n *NatsWorkerFactory) NewWorker(qNum int) Worker {
 	w := NatsWorker{
 		name:       fmt.Sprintf("node-%d-worker-%d", n.NodeID, qNum),
-		stream:     n.stream,
-		numRetries: numRetries,
+		stream:     n.Stream,
+		numRetries: n.NumRetries,
 		filter:     fmt.Sprintf("%s.%d", n.QueueName, qNum),
+		proc:       n.ProcessorFactory.NewProcessor(),
+		qNum:       qNum,
 	}
 	return &w
 }
@@ -31,6 +42,9 @@ type NatsWorker struct {
 	name       string
 	filter     string
 	numRetries int
+	proc       ClientNatsProcessor
+	ctx        context.Context
+	qNum       int
 }
 
 func (w *NatsWorker) Start(ctx context.Context, wg *sync.WaitGroup) error {
@@ -74,28 +88,10 @@ func (w *NatsWorker) Start(ctx context.Context, wg *sync.WaitGroup) error {
 }
 
 func (w *NatsWorker) process(msg jetstream.Msg) {
+	_ = w.proc.Process(w.ctx, w.qNum, msg) // TODO error handling
 	err := msg.Ack()
 	if err != nil {
 		slog.Error("cant process ", "msg", msg)
-		// slog.Error("error to acknowlage nats", "err", err, "worker", w.name, "qNum", w.qNum, "data", string(msg.Data()))
+		panic(err)
 	}
-}
-
-func getStream(ctx context.Context, url string) (jetstream.JetStream, jetstream.Stream, error) {
-	// !TODO disconnect if error
-	nc, err := nats.Connect(url)
-	if err != nil {
-		return nil, nil, err
-	}
-
-	js, err := jetstream.New(nc)
-	if err != nil {
-		return nil, nil, err
-	}
-
-	stream, err := js.Stream(ctx, "SUBJECTS")
-	if err != nil {
-		return nil, nil, err
-	}
-	return js, stream, nil
 }
