@@ -5,7 +5,7 @@ go 1.26.2
 require (
 	github.com/alecthomas/kong v1.15.0
 	github.com/dsyabitov/go-queuering v0.0.2
-	github.com/dsyabitov/go-queuering-cluster v0.0.3
+	github.com/dsyabitov/go-queuering-cluster v0.0.4
 	github.com/hashicorp/memberlist v0.5.4
 	github.com/nats-io/nats-server/v2 v2.12.5
 	github.com/nats-io/nats.go v1.49.0
