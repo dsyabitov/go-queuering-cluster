@@ -20,7 +20,7 @@ type ClientRedisProcessorFactory interface {
 }
 
 type RedisWorkerFactory struct {
-	RedisAddr        string
+	RedisAddr        []string
 	QueueName        string
 	NodeID           int
 	NumRetries       int
@@ -41,7 +41,7 @@ func (r *RedisWorkerFactory) NewWorker(qNum int) Worker {
 
 type RedisWorker struct {
 	proc       ClientRedisProcessor
-	redisAddr  string
+	redisAddr  []string
 	name       string
 	stream     string
 	qNum       int
@@ -49,12 +49,8 @@ type RedisWorker struct {
 }
 
 func (w *RedisWorker) Start(ctx context.Context, wg *sync.WaitGroup) error {
-	rdb := redis.NewClient(&redis.Options{
-		Addr:               w.redisAddr,
-		DialerRetries:      5,                      //nolint:mnd //TODO
-		DialerRetryTimeout: 100 * time.Millisecond, //nolint:mnd //TODO // used when DialerRetryBackoff is nil
-		// Optional: exponential backoff with jitter and a cap.
-		//		DialerRetryBackoff: redis.DialRetryBackoffExponential(100*time.Millisecond, 2*time.Second),
+	rdb := redis.NewClusterClient(&redis.ClusterOptions{
+		Addrs: w.redisAddr,
 	})
 
 	err := rdb.XGroupCreateMkStream(ctx, w.stream, fmt.Sprintf("%s.group", w.stream), "0").Err()
@@ -67,7 +63,7 @@ func (w *RedisWorker) Start(ctx context.Context, wg *sync.WaitGroup) error {
 	return nil
 }
 
-func (w *RedisWorker) readMessages(ctx context.Context, rdb *redis.Client, wg *sync.WaitGroup) {
+func (w *RedisWorker) readMessages(ctx context.Context, rdb *redis.ClusterClient, wg *sync.WaitGroup) {
 	defer func() {
 		_ = rdb.Close()
 		wg.Done()

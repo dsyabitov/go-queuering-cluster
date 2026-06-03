@@ -154,7 +154,7 @@ func startSubscriber(ctx context.Context, conf *SubscriberConf) {
 		}
 	} else {
 		wf = &queueringcluster.RedisWorkerFactory{
-			RedisAddr:        fmt.Sprintf("%s:%d", conf.RedisHost, conf.RedisPort),
+			RedisAddr:        []string{fmt.Sprintf("%s:%d", conf.RedisHost, conf.RedisPort)},
 			QueueName:        queueName,
 			NodeID:           int(conf.Port),
 			NumRetries:       numRetries,
